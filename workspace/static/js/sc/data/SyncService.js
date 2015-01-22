@@ -352,6 +352,12 @@ sc.data.SyncService.prototype.sendQuads = function(quads, url, method, format, s
     errorHandler = errorHandler || jQuery.noop;
     format = format || 'text/turtle';
 
+    goog.structs.forEach(quads, function(quad) {
+        if(quad.object.match(/"".*""/)) {
+            quad.object = quad.object.split('""').join('"');    
+        }
+    });
+
     this.databroker.serializeQuads(quads, format, function(data, error) {
         if (data != null) {
             jQuery.ajax({
@@ -359,9 +365,17 @@ sc.data.SyncService.prototype.sendQuads = function(quads, url, method, format, s
                 url: url,
                 success: function() {
                     successHandler.apply(this, arguments);
-                    console.warn('Quads sent: ' + quads);
                 }.bind(this),
-                error: function() {
+                error: function(jqXHR, textStatus, errorThrown) {
+                    console.error('ERROR! ' + errorThrown);
+                    console.error('textStatus: ' + textStatus);
+                    console.error('jqXHR (full obj):');
+                    console.error(jqXHR);
+                    console.error('jqXHR.responseText:');
+                    console.error(jqXHR.responseText);
+                    console.error('data:');
+                    console.error(data);
+                    console.error('************ End error **********');
                     errorHandler.apply(this, arguments);
                 },
                 data: data,

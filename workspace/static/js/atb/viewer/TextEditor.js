@@ -2,6 +2,7 @@ goog.provide('atb.viewer.TextEditor');
 
 goog.require('goog.dom');
 goog.require('goog.dom.DomHelper');
+goog.require('goog.dom.classes');
 
 goog.require('goog.editor.Command');
 goog.require('goog.editor.Field');
@@ -78,8 +79,6 @@ atb.viewer.TextEditor = function(clientApp, opt_initialTextContent) {
 goog.inherits(atb.viewer.TextEditor, atb.viewer.Viewer);
 
 atb.viewer.TextEditor.VIEWER_TYPE = 'text editor';
-
-atb.viewer.TextEditor.prototype.autoSaveInterval = 3 * 1000;
 
 /**
  * getSanitizedHtml()
@@ -170,24 +169,23 @@ atb.viewer.TextEditor.prototype.addStylesheetToEditor = function (stylesheetURI)
  * @param opt_doAfter {function=}
  * @param opt_doAfterScope {object=}
  **/
-atb.viewer.TextEditor.prototype.saveContents = function (
-    opt_doAfter, opt_doAfterScope, opt_synchronously
-) {
+atb.viewer.TextEditor.prototype.saveContents = function () {
+    console.info('SaveContents...');
+
     if (this.resourceId == null) {
         this.resourceId = this.databroker.createUuid();
         this.uri = this.resourceId;
     }
     // this.updateAllPropertiesFromPane();
     
-    this.unsavedChanges = false;
-
     var resource = this.databroker.getResource(this.resourceId);
     this.databroker.dataModel.setTitle(resource, this.getTitle());
     this.databroker.dataModel.setTextContent(resource, this.getSanitizedHtml());
-    console.warn('SaveContents');
 
     var highlightPlugin = this.field.getPluginByClassId('Annotation');
     highlightPlugin.updateAllHighlightResources();
+
+    this.unsavedChanges = false;
 };
 
 /**
@@ -257,13 +255,21 @@ atb.viewer.TextEditor.prototype.render = function(div) {
     this._renderDocumentIcon();
     
     // This is where the textEditor save Interval is created.
+    atb.viewer.TextEditor.prototype.autoSaveInterval = 30 * 1000;
+
     this.autoSaveIntervalObject = window.setInterval(
         atb.Util.scopeAsyncHandler(this.saveIfModified, this), 
         this.autoSaveInterval);
 
-    this.clientApp.registerFunctionToCallBeforeUnload(function() {
-        this.saveIfModified(true);
-    }.bind(this));
+    atb.viewer.TextEditor.prototype.autoOutputSaveStatus = 7 * 1000;
+
+    this.autoOutputSaveStatusIntervalObject = window.setInterval(
+        atb.Util.scopeAsyncHandler(this.outputSaveStatus, this), 
+        this.autoOutputSaveStatus);
+
+    // this.clientApp.registerFunctionToCallBeforeUnload(function() {
+    //     this.saveIfModified(true);
+    // }.bind(this));
     
     goog.events.listen(
         this.clientApp.getEventDispatcher(), 
@@ -426,14 +432,14 @@ atb.viewer.TextEditor.prototype._renderToolbar = function() {
 
         myToolbar.addChildAt(annotateButton, 0, true);
         
-        // this.propertiesButton = goog.ui.editor.ToolbarFactory.makeToggleButton(
-        //     'properties',
-        //     'Edit this document\'s properties',
-        //     '',
-        //     'icon-info-sign'
-        // );
-        // goog.events.listen(this.propertiesButton, goog.ui.Component.EventType.ACTION, this.handlePropertiesButtonClick_, false, this);
-        // myToolbar.addChild(this.propertiesButton, true);
+        this.saveButton = goog.ui.editor.ToolbarFactory.makeButton(
+            'save',
+            'Save this document',
+            '',
+            'icon-ok'
+        );
+        goog.events.listen(this.saveButton, goog.ui.Component.EventType.ACTION, this.handleSaveButtonClick_, false, this);
+        myToolbar.addChild(this.saveButton, true);
     }
 
     var saveStatusDiv = this.domHelper.createDom('div', {'id': this.useID + '_js_save_status', 'class': 'goog-toolbar goog-toolbar-horizontal'}, 'Loading document...');
@@ -502,14 +508,18 @@ atb.viewer.TextEditor.prototype._renderToolbar = function() {
 //     this.propertiesButton.setChecked(false);
 // };
 
-// atb.viewer.TextEditor.prototype.handlePropertiesButtonClick_ = function (e) {
-//     if (this.propertiesPanelVisible) {
-//         this.hidePropertiesPane();
-//     }
-//     else {
-//         this.showPropertiesPane();
-//     }
-// };
+atb.viewer.TextEditor.prototype.handleSaveButtonClick_ = function (e) {
+    console.warn('**** Document Save Clicked ****');
+    
+    // disable save button
+    this.saveButton.setEnabled(false);
+    
+    this.saveContents();
+    // wait 1 second??
+    this.databroker.sync();
+
+    // Save button re-enabled in the outputSaveStatus check.
+};
 
 atb.viewer.TextEditor.prototype.setPurpose = function (purpose) {
     this.purpose = purpose;
@@ -550,7 +560,8 @@ atb.viewer.TextEditor.prototype.addGlobalEventListeners = function () {
 
     // Stops autosave when the window is closed.
     goog.events.listen(this.container.closeButton, 'click', function(e) {
-        clearInterval(this.autoSaveIntervalObject);
+        clearInterval(this.autoOutputSaveStatusIntervalObject);
+        // clearInterval(this.autoSaveIntervalObject);
     }, false, this);
 };
 
@@ -1308,7 +1319,7 @@ atb.viewer.TextEditor.prototype.onChange = function (event) {
     if (this.databroker.hasSyncErrors) {
         this.saveStatus = "Not Saved - Sync Errors!";
     } else {
-        this.saveStatus = "Processing...";
+        this.saveStatus = "Not Saved";
     }
 
     if (saveStatusElement) {
@@ -1318,7 +1329,7 @@ atb.viewer.TextEditor.prototype.onChange = function (event) {
     this.timeOfLastChange = goog.now();
 };
 
-atb.viewer.TextEditor.prototype.saveDelayAfterLastChange = 1 * 1000;
+atb.viewer.TextEditor.prototype.saveDelayAfterLastChange = 2 * 1000;
 
 // This is run every 2 seconds (see above)
 atb.viewer.TextEditor.prototype.saveIfModified = function (opt_synchronously) {
@@ -1327,31 +1338,47 @@ atb.viewer.TextEditor.prototype.saveIfModified = function (opt_synchronously) {
     console.warn('Sync Service Errors:');
     console.warn(this.databroker.hasSyncErrors);
 
-    // change to SAVED here if databroker doesn't see unSavedChanges!
-    var domHelper = this.domHelper;
-    var saveStatusElement = domHelper.getDocument().getElementById(this.useID + '_js_save_status');
-    
+    var isNotStillTyping = goog.isNumber(this.timeOfLastChange) &&
+        (goog.now() - this.timeOfLastChange) > this.saveDelayAfterLastChange;
+
+    if (this.hasUnsavedChanges() && isNotStillTyping) {
+        this.saveContents();
+    }
+
+    // this.outputSaveStatus();
+};
+
+atb.viewer.TextEditor.prototype.outputSaveStatus = function () {
+    // Remove the below console outputs when save works.
+    console.info('***** Checking saved status...');
+    console.info('this.unsavedChanges:');
+    console.info(this.unsavedChanges);
+    console.info('Does databroker see unsaved changes?');
+    console.info(this.databroker.syncService.hasUnsavedChanges());
+    console.info('Sync Service Errors:');
+    console.info(this.databroker.hasSyncErrors);
+    /////
+
     if (!this.unsavedChanges && !this.databroker.syncService.hasUnsavedChanges() && !this.databroker.hasSyncErrors) {
         this.saveStatus = "Saved";
     } else if (this.databroker.hasSyncErrors) {
         this.saveStatus = "Not Saved - Sync Errors!";
     } else if (this.unsavedChanges || this.databroker.syncService.hasUnsavedChanges()) {
-        this.saveStatus = "Processing...";   
+        this.saveStatus = "Not Saved";   
     } else {
         this.saveStatus = "Document Loaded";
     }
+
+    var domHelper = this.domHelper;
+    var saveStatusElement = domHelper.getDocument().getElementById(this.useID + '_js_save_status');
 
     if (saveStatusElement) {            
         this.domHelper.setTextContent(saveStatusElement, this.saveStatus);
     }
 
-    var isNotStillTyping = goog.isNumber(this.timeOfLastChange) &&
-        (goog.now() - this.timeOfLastChange) > this.saveDelayAfterLastChange;
-
-    if (this.hasUnsavedChanges() && isNotStillTyping) {
-        this.saveContents(null, null, opt_synchronously);
-    }
-};
+    // After the content is saved and synced the save button is re-enabled.
+    this.saveButton.setEnabled(true);
+}
 
 atb.viewer.TextEditor.prototype.handleLinkingModeExited = function (event) {
     var highlightPlugin = this.field.getPluginByClassId('Annotation');
